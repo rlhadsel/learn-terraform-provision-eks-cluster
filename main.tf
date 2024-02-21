@@ -258,7 +258,7 @@ resource "aws_instance" "ubuntu_bastion_ec2" {
   ami           = "ami-07b36ea9852e986ad"
   instance_type = "t3.xlarge"
   # availability_zone           = module.vpc.azs[0]
-  key_name                    = "rhadsell-kp-oh-pem"
+  key_name                    = var.key_pair_name
   vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
   disable_api_termination     = true
   associate_public_ip_address = true

@@ -16,3 +16,7 @@ variable "aws_secret_key" {
   description = "AWS Secret Key"
   type        = string
 }
+
+variable "key_pair_name" {
+  description = "AWS Key Pair to access Bastion machine"
+}
