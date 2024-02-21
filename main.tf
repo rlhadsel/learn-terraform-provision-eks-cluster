@@ -3,6 +3,8 @@
 
 provider "aws" {
   region = var.region
+  access_key = var.aws_access_key
+  secret_key = var.aws_secret_key
 }
 
 # Filter out local zones, which are not currently supported 
@@ -124,5 +126,146 @@ resource "aws_eks_addon" "ebs-csi" {
   tags = {
     "eks_addon" = "ebs-csi"
     "terraform" = "true"
+  }
+}
+
+
+# # Create an internet gateway
+# resource "aws_internet_gateway" "terra_IGW" {
+#   vpc_id = module.vpc.id
+#   tags = {
+#     name = "bastion-igw"
+#   }
+# }
+# # Create a custom route table
+# resource "aws_route_table" "terra_route_table" {
+#   vpc_id = aws_vpc.terra_vpc.id
+#   tags = {
+#     name = "my_route_table"
+#   }
+# }
+# # create route
+# resource "aws_route" "terra_route" {
+#   destination_cidr_block = "0.0.0.0/0"
+#   gateway_id  = aws_internet_gateway.terra_IGW.id
+#   route_table_id = aws_route_table.terra_route_table.id
+# }
+# # create a subnet
+# resource "aws_subnet" "terra_subnet" {
+#   vpc_id = aws_vpc.terra_vpc.id
+#   cidr_block = "10.0.1.0/24"
+#   availability_zone = var.availability_zone
+
+#   tags = {
+#     name = "my_subnet"
+#   }
+# }
+# # associate internet gateway to the route table by using subnet
+# resource "aws_route_table_association" "terra_assoc" {
+#   subnet_id = aws_subnet.terra_subnet.id
+#   route_table_id = aws_route_table.terra_route_table.id
+# }
+
+data "http" "my_public_ip" {
+  url = "https://ifconfig.co/json"
+  request_headers = {
+    Accept = "application/json"
+  }
+}
+
+locals {
+  ifconfig_co_json = jsondecode(data.http.my_public_ip.body)
+}
+
+output "my_ip_addr" {
+  value = local.ifconfig_co_json.ip
+}
+
+# create security group to allow ingoing ports
+resource "aws_security_group" "bastion_sg" {
+  name        = "bastion-sg"
+  description = "security group for bastion EC2 instance"
+  vpc_id      = module.vpc.vpc_id
+  ingress = [
+    {
+      description      = "https traffic"
+      from_port        = 443
+      to_port          = 443
+      protocol         = "tcp"
+      cidr_blocks      = ["${local.ifconfig_co_json.ip}/32", "10.0.0.0/16"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    },
+    {
+      description      = "http traffic"
+      from_port        = 80
+      to_port          = 80
+      protocol         = "tcp"
+      cidr_blocks      = ["${local.ifconfig_co_json.ip}/32", "10.0.0.0/16"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    },
+    {
+      description      = "ssh"
+      from_port        = 22
+      to_port          = 22
+      protocol         = "tcp"
+      cidr_blocks      = ["${local.ifconfig_co_json.ip}/32", "10.0.0.0/16"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    }
+  ]
+  egress = [
+    {
+      from_port        = 0
+      to_port          = 0
+      protocol         = "-1"
+      cidr_blocks      = ["0.0.0.0/0"]
+      description      = "Outbound traffic rule"
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    }
+  ]
+  tags = {
+    name = "allow_web"
+  }
+}
+
+# # create a network interface with private ip from step 4
+# resource "aws_network_interface" "terra_net_interface" {
+#   subnet_id = aws_subnet.terra_subnet.id
+#   security_groups = [aws_security_group.terra_SG.id]
+# }
+# # assign a elastic ip to the network interface created in step 7
+# resource "aws_eip" "terra_eip" {
+#   vpc = true
+#   network_interface = aws_network_interface.terra_net_interface.id
+#   associate_with_private_ip = aws_network_interface.terra_net_interface.private_ip
+#   depends_on = [aws_internet_gateway.terra_IGW, aws_instance.terra_ec2]
+# }
+
+# create an ubuntu server and install/enable apache2
+resource "aws_instance" "ubuntu_bastion_ec2" {
+  ami           = "ami-07b36ea9852e986ad"
+  instance_type = "t3.xlarge"
+  # availability_zone           = module.vpc.azs[0]
+  key_name                    = "rhadsell-kp-oh-pem"
+  vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
+  disable_api_termination     = true
+  associate_public_ip_address = true
+  subnet_id                   = module.vpc.public_subnets[0]
+
+  user_data = data.template_file.bastion_server_setup.rendered
+
+  tags = {
+    Name = "bastion_ubuntu_server"
   }
 }
