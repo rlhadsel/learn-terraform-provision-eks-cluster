@@ -1,8 +1,9 @@
 # Copyright (c) HashiCorp, Inc.
 # SPDX-License-Identifier: MPL-2.0
+# https://dev.to/aws-builders/creating-an-eks-cluster-and-node-group-with-terraform-1lf6
 
 provider "aws" {
-  region = var.region
+  region     = var.region
   access_key = var.aws_access_key
   secret_key = var.aws_secret_key
 }
