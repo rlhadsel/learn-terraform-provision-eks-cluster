@@ -8,6 +8,12 @@ provider "aws" {
   secret_key = var.aws_secret_key
 }
 
+data "aws_caller_identity" "current" {}
+
+output "account_id" {
+  value = data.aws_caller_identity.current.account_id
+}
+
 # Filter out local zones, which are not currently supported 
 # with managed node groups
 data "aws_availability_zones" "available" {
@@ -102,6 +108,9 @@ module "eks" {
   }
 }
 
+output "eks_oidc_info" {
+  value = module.eks.oidc_provider
+}
 
 # https://aws.amazon.com/blogs/containers/amazon-ebs-csi-driver-is-now-generally-available-in-amazon-eks-add-ons/ 
 data "aws_iam_policy" "ebs_csi_policy" {
@@ -130,6 +139,25 @@ resource "aws_eks_addon" "ebs-csi" {
   }
 }
 
+data "template_file" "aws_ebs_csi_driver_trust_policy_json" {
+  template = file("aws_ebs_csi_driver_trust_policy.json.tpl")
+
+  vars = {
+    region       = "${var.region}"
+    OIDCID       = "${module.eks.oidc_provider}"
+    AWSAccountID = data.aws_caller_identity.current.account_id
+  }
+}
+
+data "aws_iam_policy" "aws_ebs_csi_driver_policy" {
+  arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+resource "aws_iam_role" "aws_ebs_csi_driver_role" {
+  name                = "AmazonEKS_EBS_CSI_DriverRole_${random_string.suffix.result}"
+  assume_role_policy  = data.template_file.aws_ebs_csi_driver_trust_policy_json.rendered
+  managed_policy_arns = [data.aws_iam_policy.aws_ebs_csi_driver_policy.arn]
+}
 
 # # Create an internet gateway
 # resource "aws_internet_gateway" "terra_IGW" {
@@ -253,10 +281,17 @@ resource "aws_security_group" "bastion_sg" {
 #   depends_on = [aws_internet_gateway.terra_IGW, aws_instance.terra_ec2]
 # }
 
+# # Create an instance profile so the aws cli commands will function in userdata scripts
+# resource "aws_iam_instance_profile" "bastion_instance_profile" {
+#   name = "bastion_instance_profile"
+#   role = aws_iam_role.age_role.name
+# }
+
 # create an ubuntu server and install/enable apache2
 resource "aws_instance" "ubuntu_bastion_ec2" {
   ami           = "ami-07b36ea9852e986ad"
   instance_type = "t3.xlarge"
+  # iam_instance_profile = 
   # availability_zone           = module.vpc.azs[0]
   key_name                    = var.key_pair_name
   vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
