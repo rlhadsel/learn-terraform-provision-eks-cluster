@@ -125,7 +125,7 @@ module "irsa-ebs-csi" {
   role_name                     = "AmazonEKSTFEBSCSIRole-${module.eks.cluster_name}"
   provider_url                  = module.eks.oidc_provider
   role_policy_arns              = [data.aws_iam_policy.ebs_csi_policy.arn]
-  oidc_fully_qualified_subjects = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
+  oidc_fully_qualified_subjects = ["sts.amazonaws.com", "system:serviceaccount:kube-system:ebs-csi-controller-sa"]
 }
 
 resource "aws_eks_addon" "ebs-csi" {
@@ -139,8 +139,28 @@ resource "aws_eks_addon" "ebs-csi" {
   }
 }
 
-data "template_file" "aws_ebs_csi_driver_trust_policy_json" {
-  template = file("aws_ebs_csi_driver_trust_policy.json.tpl")
+# data "template_file" "aws_ebs_csi_driver_trust_policy_json" {
+#   template = file("aws_ebs_csi_driver_trust_policy.json.tpl")
+
+#   vars = {
+#     region       = "${var.region}"
+#     OIDCID       = "${module.eks.oidc_provider}"
+#     AWSAccountID = data.aws_caller_identity.current.account_id
+#   }
+# }
+
+# data "aws_iam_policy" "aws_ebs_csi_driver_policy" {
+#   arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+# }
+
+# resource "aws_iam_role" "aws_ebs_csi_driver_role" {
+#   name                = "AmazonEKS_EBS_CSI_DriverRole_${random_string.suffix.result}"
+#   assume_role_policy  = data.template_file.aws_ebs_csi_driver_trust_policy_json.rendered
+#   managed_policy_arns = [data.aws_iam_policy.aws_ebs_csi_driver_policy.arn]
+# }
+
+data "template_file" "aws_trust_policy_json" {
+  template = file("aws_alb_controller_trust_policy.json.tpl")
 
   vars = {
     region       = "${var.region}"
@@ -149,15 +169,56 @@ data "template_file" "aws_ebs_csi_driver_trust_policy_json" {
   }
 }
 
-data "aws_iam_policy" "aws_ebs_csi_driver_policy" {
-  arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+resource "aws_iam_role" "aws_alb_controller_role" {
+  name               = "AmazonEKSLoadBalancerControllerRole_${random_string.suffix.result}"
+  assume_role_policy = data.template_file.aws_trust_policy_json.rendered
 }
 
-resource "aws_iam_role" "aws_ebs_csi_driver_role" {
-  name                = "AmazonEKS_EBS_CSI_DriverRole_${random_string.suffix.result}"
-  assume_role_policy  = data.template_file.aws_ebs_csi_driver_trust_policy_json.rendered
-  managed_policy_arns = [data.aws_iam_policy.aws_ebs_csi_driver_policy.arn]
+resource "aws_iam_policy" "aws_alb_controller_policy" {
+  name        = "AmazonEKSLoadBalancerControllerRole_${random_string.suffix.result}"
+  path        = "/"
+  description = "AWS LB Controller Policy for Terraform deployment"
+  policy      = file("aws_lb_controller_policy.json")
 }
+
+resource "aws_iam_role_policy_attachment" "example" {
+  policy_arn = aws_iam_policy.aws_alb_controller_policy.arn
+  role       = aws_iam_role.aws_alb_controller_role.name
+}
+
+# Copy yaml file to s3 bucket
+
+resource "aws_s3_bucket" "kubectl_config" {
+  bucket        = "rh-tf-kubectlconfig"
+  force_destroy = true
+}
+
+locals {
+  template_vars = {
+    uniqueid     = "${random_string.suffix.result}"
+    AWSAccountID = data.aws_caller_identity.current.account_id
+  }
+}
+
+resource "aws_s3_object" "minHA_windows_bed_json" {
+  bucket = aws_s3_bucket.kubectl_config.id
+  key    = "kubectl-config/aws_load_balancer_controller_service_account.yaml"
+  # this is pulled from here: https://www.reddit.com/r/Terraform/comments/p2fsoq/importing_variables_into_a_file_before_uploading/?rdt=34139
+  # this helped with $path.module: https://stackoverflow.com/questions/65680044/invalid-value-for-path-parameter-no-file-exists-at
+  content = templatefile("${path.module}/aws_load_balancer_controller_service_account.yaml.tpl", local.template_vars)
+}
+
+# pull from s3 using cli on ubuntu client machine
+# run commands from the notes to instantiate things
+
+# data "template_file" "kubectl_service_acct_yaml" {
+#   template = file("aws_load_balancer_controller_service_account.yaml.tpl")
+
+#   vars = {
+#     uniqueid       = "${random_string.suffix.result}"
+#     AWSAccountID = data.aws_caller_identity.current.account_id
+#   }
+# }
 
 # # Create an internet gateway
 # resource "aws_internet_gateway" "terra_IGW" {
