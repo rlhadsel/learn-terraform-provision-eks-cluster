@@ -99,7 +99,7 @@ module "eks" {
     three = {
       name = "node-group-3"
 
-      instance_types = ["t3.small"]
+      instance_types = ["m5a.2xlarge"]
 
       min_size     = 3
       max_size     = 3
@@ -137,6 +137,16 @@ resource "aws_eks_addon" "ebs-csi" {
     "eks_addon" = "ebs-csi"
     "terraform" = "true"
   }
+}
+
+resource "aws_security_group_rule" "allow_https_inbound" {
+  type              = "ingress"
+  description       = "HTTPS ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = module.eks.cluster_security_group_id
 }
 
 # data "template_file" "aws_ebs_csi_driver_trust_policy_json" {
@@ -278,6 +288,17 @@ resource "aws_security_group" "bastion_sg" {
   vpc_id      = module.vpc.vpc_id
   ingress = [
     {
+      description      = "rdp"
+      from_port        = 3389
+      to_port          = 3389
+      protocol         = "tcp"
+      cidr_blocks      = ["${local.ifconfig_co_json.ip}/32", "10.0.0.0/16"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    },
+    {
       description      = "https traffic"
       from_port        = 443
       to_port          = 443
@@ -366,3 +387,23 @@ resource "aws_instance" "ubuntu_bastion_ec2" {
     Name = "bastion_ubuntu_server"
   }
 }
+
+resource "aws_instance" "windows_bastion_ec2" {
+  ami           = "ami-0e6aa5f69f06ffa91"
+  instance_type = "t3.xlarge"
+  # iam_instance_profile = 
+  # availability_zone           = module.vpc.azs[0]
+  key_name                    = var.key_pair_name
+  vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
+  disable_api_termination     = true
+  associate_public_ip_address = true
+  subnet_id                   = module.vpc.public_subnets[0]
+
+  #user_data = data.template_file.bastion_server_setup.rendered
+
+  tags = {
+    Name = "bastion_windows_server"
+  }
+}
+
+# https://api.k8slens.dev/binaries/Lens%20Setup%202024.1.300751-latest.exe
